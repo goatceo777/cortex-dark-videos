@@ -1,0 +1,56 @@
+
+name: Generate Daily Stoic Videos (free, self-hosted)
+
+on:
+  repository_dispatch:
+    types: [generate-daily-videos]
+  workflow_dispatch:
+    inputs:
+      posts_json:
+        description: "JSON array of {title,hook,script,caption}"
+        required: true
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Clone MoneyPrinterTurbo
+        run: git clone --depth 1 https://github.com/harry0703/MoneyPrinterTurbo.git app
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        working-directory: app
+        run: pip install -r requirements.txt
+
+      - name: Write config.toml
+        working-directory: app
+        run: |
+          cat > config.toml << EOF
+          [app]
+          pexels_api_keys = ["${{ secrets.PEXELS_API_KEY }}"]
+          endpoint = "http://127.0.0.1:8080"
+          EOF
+
+      - name: Start server
+        working-directory: app
+        run: |
+          nohup python main.py > server.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8080/docs > /dev/null && break
+            sleep 2
+          done
+
+      - name: Generate videos
+        env:
+          POSTS_JSON: ${{ github.event.client_payload.posts_json || github.event.inputs.posts_json }}
+        run: python scripts/generate_videos.py
+
+      - name: Publish videos as a GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: videos-${{ github.run_id }}
+          files: output/*.mp4
